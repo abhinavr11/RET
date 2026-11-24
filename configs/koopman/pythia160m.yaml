@@ -1,0 +1,51 @@
+# ==========================================================================
+# Koopman on RET — Pythia-160M, layer 6, Pile chunks (cheap development backbone)
+#
+# 1. export z:   python scripts/koopman/export_z.py \
+#                  --checkpoint outputs/Pythia160M/pile/ret_autonomous/checkpoint_final.pt \
+#                  --out-dir outputs/koopman/Pythia160M_pile_l6/z \
+#                  --max-docs train=20000 val=500 test=1000
+# 2-4. same as configs/koopman/gptoss20b.yaml with this file.
+#
+# Chunks are 512 tokens, so horizons stop at 128 and windows never cross chunks.
+# ==========================================================================
+
+experiment_dir: outputs/koopman/Pythia160M_pile_l6
+
+data:
+  z_dir: outputs/koopman/Pythia160M_pile_l6/z
+  max_train_docs: null
+  max_val_docs: 500
+  exclude_prompt: false
+  in_memory: true
+  data_device: cpu
+
+clusters:
+  source: kmeans
+  K: 64
+
+model:
+  lift_dim: 512
+  psi_hidden: [512, 512]
+  operator: dense
+  decoder: linear_fixed
+
+loss:
+  horizon_schedule: [[0, 1], [3000, 8], [10000, 32]]
+
+train:
+  steps: 30000
+  batch_size: 512
+  eval_every: 1000
+  device: cuda
+
+eval:
+  split: test
+  max_docs: 1000
+  horizons: [1, 2, 4, 8, 16, 32, 64, 128]
+  max_starts: 200000
+
+baselines:
+  mlp:
+    hidden_dims: [64, 128, 256, 512]
+    train_horizons: [1, 32]

@@ -1,0 +1,103 @@
+# ==========================================================================
+# Koopman on RET — GPT-OSS-20B, layer 11, NuminaMath (paper headline setting)
+#
+# 1. export z:   python scripts/koopman/export_z.py \
+#                  --checkpoint outputs/GptOss20B/numina_math/ret_jepa_auth_l11/checkpoint_final.pt \
+#                  --out-dir outputs/koopman/GptOss20B_numina_l11/z \
+#                  --max-docs train=16000 val=500 test=1000
+# 2. baselines:  python scripts/koopman/fit_baselines.py configs/koopman/gptoss20b.yaml
+# 3. train:      python scripts/koopman/train.py configs/koopman/gptoss20b.yaml
+# 4. evaluate:   python scripts/koopman/eval_horizon.py configs/koopman/gptoss20b.yaml
+#
+# Every field can be overridden on the command line: model.lift_dim=1024 train.seed=1
+# All fields and defaults: koopman/config.py
+# ==========================================================================
+
+experiment_dir: outputs/koopman/GptOss20B_numina_l11
+run_name: null                 # null = N{lift_dim}_{operator}_{decoder}_H{H}_s{seed}
+ret_checkpoint: null           # null = taken from <z_dir>/export_meta.json
+
+data:
+  z_dir: outputs/koopman/GptOss20B_numina_l11/z
+  train_split: train
+  val_split: val
+  max_train_docs: null         # all exported train docs
+  max_val_docs: 500
+  exclude_prompt: false        # true = only pairs inside the generation (needs prompt lengths at export)
+  in_memory: true
+  data_device: cpu             # cuda = keep trajectories on the GPU (16k docs x ~1.1k tokens x 128 x 4 B ≈ 9 GB)
+
+clusters:
+  # kmeans works out of the box. After running scripts/clustering/train_centers.py, switch to
+  #   source: ret
+  #   ret_dir: <the --output-dir of train_centers.py>   (contains clustering_meta.json and w1/)
+  source: kmeans
+  ret_dir: null
+  K: 64
+  seed: 1
+  tau: 0.1
+  alpha: 1.0
+
+model:
+  lift_dim: 512                # N = 128 (z) + 1 (const) + 383 (psi)
+  psi_hidden: [512, 512]
+  psi_norm: batchnorm
+  include_state: true
+  include_const: true
+  operator: dense              # dense | blockdiag | lstsq
+  operator_init: identity
+  decoder: linear_fixed        # linear_fixed | linear_learned | mlp
+
+loss:
+  horizon_schedule: [[0, 1], [3000, 8], [10000, 32]]
+  rho: 0.9
+  w_pred: 1.0
+  w_lin: 0.1
+  w_recon: 1.0
+  w_spec: 1.0
+  spec_target: 1.0
+  w_var: 1.0
+  w_cov: 0.04
+  loss_space: raw
+
+train:
+  steps: 30000
+  batch_size: 512
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  warmup_steps: 500
+  eval_every: 1000
+  eval_max_starts: 20000
+  patience: 8
+  seed: 0
+  device: cuda
+
+eval:
+  split: test
+  max_docs: 1000
+  horizons: [1, 2, 4, 8, 16, 32, 64, 128]
+  stride: 1
+  max_starts: 200000
+  batch_size: 4096
+
+baselines:
+  run: [mean, persistence, dmd, edmd, ulam, ret_predictor, mlp, direct]
+  dmd_ridge: 1.0e-6
+  max_fit_pairs: 5000000
+  edmd:
+    - {features: rff, num_features: 512}
+    - {features: rff, num_features: 2048}
+    - {features: rbf, num_features: 256}
+  mlp:
+    hidden_dims: [64, 128, 256, 512]   # same capacity sweep as the paper's closure probes
+    num_layers: 2
+    train_horizons: [1, 32]            # H=1 = closure protocol; H=32 = fair multi-step competitor
+    steps: 4000
+    batch_size: 512
+    lr: 1.0e-3
+    eval_every: 200
+    patience: 15
+  direct:
+    ks: [1, 2, 4, 8, 16, 32, 64, 128]
+    hidden_dim: 512
+    steps: 8000
